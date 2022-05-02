@@ -6,6 +6,9 @@
 #include<fstream>
 
 
+#include<fenv.h>
+
+//#define PARANOID
 
 //=============================================================
 /// Namespace for parameters
@@ -107,8 +110,16 @@ namespace GlobalParameters
  /// current temperature
  double current_temperature(const double& time)
  {
-  // Cut off
-  return std::max(T_end,T_init+(T_end-T_init)*time);
+  double t_switch_over=3.0;
+  if (time<t_switch_over)
+   {
+    return std::max(T_end,T_init+(T_end-T_init)*time);
+   }
+  else
+   {
+    return std::min(0.9*T_infinite_cryst,
+                    T_end-(T_end-T_init)*(time-t_switch_over)); 
+   }
  }
 
 
@@ -149,19 +160,20 @@ int main()
 {
 
 
+ //feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
 
  // Number of timesteps
- unsigned nstep=1000;
+ unsigned nstep=10000; // 10000;
 
  // Max. time
- double t_max=10.0;
+ double t_max=10.0; //10.0;
  
  // Timestep
  double dt=t_max/double(nstep);
 
  // Initial doc of stuff
  std::ofstream some_file;
- some_file.open("crystallsation_properties.dat");
+ some_file.open("RESLT/crystallsation_properties.dat");
  unsigned nplot=100;
  double T_max=GlobalParameters::T_infinite_cryst;
  double dT=T_max/double(nplot);
@@ -193,11 +205,15 @@ int main()
 
 
  std::ofstream trace_file;
- trace_file.open("trace.dat");
- 
- std::ofstream size_distribution_file;
- size_distribution_file.open("size_distribution.dat");
+ trace_file.open("RESLT/trace.dat");
 
+ 
+ #ifdef PARANOID
+ double max_error_stage1=0.0;
+ double max_error_stage2=0.0;
+ double max_error_stage3=0.0;
+ #endif
+ 
  // Timestepping loop
  double time=0.0;
  for (unsigned i=0;i<nstep;i++)
@@ -229,24 +245,38 @@ int main()
    // How many crystals fit into this incremental volume? (double prec)
    double n_new_cryst=dc_new_cryst/GlobalParameters::crystal_volume(l_new);
    GlobalParameters::Number_of_crystals_initially_created_at_timestep.
-    push_back(
-    n_new_cryst);
+    push_back(n_new_cryst);
 
-   std::cout << "during primary crystallisation phase, "
-             << "total crystalline volume changed from "
-             << c << " to " << GlobalParameters::volume_of_crystalline_phase()
-             << " corresp to change of " 
-             << GlobalParameters::volume_of_crystalline_phase()-c  << " a.k.a. "
-             << dc_new_cryst << std::endl;
+   // std::cout << "time, temp, l_new, n_new, dc_new "
+   //           << time << " "
+   //           << temp << " "
+   //           << l_new << " "
+   //           << n_new_cryst << " "
+   //           << dc_new_cryst << " "
+   //           << std::endl;
+    
+#ifdef PARANOID
+   // Check error
+   {
+    double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c)-dc_new_cryst);
+    max_error_stage1=std::max(max_error_stage1,error);
+    //std::cout << "Error stage 1: " << error << std::endl;
+   }
+#endif
+  
    
 
    // STATE 2: GROW THE CRYSTALS THAT WERE CREATED AT PREVIOUS TIMES (FIRST
    //----------------------------------------------------------------------
    // ORDER EULER SCHEME.
    //--------------------
-   double c_before_growth=GlobalParameters::volume_of_crystalline_phase();
 
+#ifdef PARANOID
+   double c_before_growth=GlobalParameters::volume_of_crystalline_phase();
+#endif
+   
    // Deal with all the timesteps excluding the current one
+   double dc_growth=0.0;
    unsigned n=
     GlobalParameters::Number_of_crystals_initially_created_at_timestep.size();
    for (unsigned j=0;j<n-1;j++)
@@ -258,100 +288,152 @@ int main()
        double l=
         GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j];
        
-       // Get (linear) growth rate
+       // Get (linear) growth rate: Forward Euler so base c on crystalline phase
+       // at previous timestep
        double dL_dt=
-        GlobalParameters::secondary_growth_rate(l,temp,c_before_growth);
-       std::cout << "dL/dt = " << dL_dt << std::endl;
+        GlobalParameters::secondary_growth_rate(l,temp,c);
        
        // Bump (first-order Euler scheme)
+       double dL=dL_dt*dt;
+
+       double v_old=num_of_cryst*GlobalParameters::crystal_volume(l);
+       double v_new=num_of_cryst*GlobalParameters::crystal_volume(l+dL);
+       dc_growth+=(v_new-v_old);
+       
        GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
         +=dL_dt*dt;
       }
     }
 
-   double dc_growth=
-    GlobalParameters::volume_of_crystalline_phase()-c_before_growth;
-   std::cout << "during secondary growth phase, "
-             << "total crystalline volume changed from "
-             << c_before_growth << " to "
-             << GlobalParameters::volume_of_crystalline_phase()
-             << " corresp to change of " 
-             << dc_growth
-             << std::endl;
-   
+#ifdef PARANOID
+   // Check error
+   {
+    double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_growth)-dc_growth);
+    max_error_stage2=std::max(max_error_stage2,error);
+    //std::cout << "Error stage 2: " << error << std::endl;
+   }
+#endif
+
 
    
    // STAGE 3: MELT STUFF
    //--------------------
-   double c_before_melt=GlobalParameters::volume_of_crystalline_phase();
-   
-   // Loop over all current individual crystal sizes and work 
-   // out their melt temperature based on their linear size.
-   // If the temperature is above the melt temperature reset the
-   // number of these crystals to zero.
-   // hierher later just pop them from a collection of pairs.
    double dc_new_melt=0.0;
-    for (unsigned j=0;j<n;j++)
+   bool allow_melting=true;
+   if (allow_melting)
     {
-     double num_of_cryst=
-      GlobalParameters::Number_of_crystals_initially_created_at_timestep[j];
-     if (num_of_cryst>0.0)
+#ifdef PARANOID
+     double c_before_melt=GlobalParameters::volume_of_crystalline_phase();
+#endif
+     
+     // Loop over all current individual crystal sizes and work 
+     // out their melt temperature based on their linear size.
+     // If the temperature is above the melt temperature reset the
+     // number of these crystals to zero.
+     // hierher later just pop them from a collection of pairs.
+     for (unsigned j=0;j<n-1;j++) // hierher don't melt newly created crystals straight away
       {
-       double l=
-        GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j];
-       double T_melt=GlobalParameters::melt_temperature(l);
-       if (T_melt<temp)
+       double num_of_cryst=
+        GlobalParameters::Number_of_crystals_initially_created_at_timestep[j];
+       if (num_of_cryst>0.0)
         {
-         dc_new_melt+=num_of_cryst*GlobalParameters::crystal_volume(l);
-         std::cout << "melting " << num_of_cryst << " crystals of size " << l
-                   << " i.e. of volume " << GlobalParameters::crystal_volume(l)
-                   << " so total vol "
-                   << num_of_cryst*GlobalParameters::crystal_volume(l)
-                   << std::endl;
-
-         // Kill 'em
-         GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
-          =0.0;
+         double l=
+          GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j];
+         double T_melt=GlobalParameters::melt_temperature(l);
+         if (T_melt<temp)
+          {
+           //std::cout << "temp : " << temp << " melting size " << l << std::endl;
+           dc_new_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
+           
+           // Kill 'em (sizes are set to zero too so they don't clunk up the animations
+           // and 0 x 0 is still zero!
+           GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
+            =0.0;
+           GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
+            =0.0;
+          }
+         else
+          {
+           //std::cout << "temp : " << temp << " not melting size " << l << std::endl;
+          }
+         
         }
       }
+     
+#ifdef PARANOID
+     // Check error
+     {
+      double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_melt)-dc_new_melt);
+      max_error_stage3=std::max(max_error_stage3,error);
+      //std::cout << "Error stage 3: " << error << std::endl;
+     }
+#endif
     }
    
-   std::cout << "during melting phase, total crystalline volume changed from "
-             << c_before_melt << " to "
-             << GlobalParameters::volume_of_crystalline_phase()
-             << " corresp to change of " 
-             << GlobalParameters::volume_of_crystalline_phase()-c_before_melt
-             << " a.k.a. "
-             << dc_new_melt << std::endl;
    
    // Doc stuff
-   trace_file << time << " "
-              << temp << " "
-              << l_new << " "
-              << GlobalParameters::G_cryst_rate(temp) << " " 
-              << dc_new_cryst << " "
-              << dc_growth << " "
-              << dc_new_melt << " " 
-              << GlobalParameters::volume_of_crystalline_phase()<< " "
+   trace_file << time << " " //1
+              << temp << " " //2
+              << l_new << " " //3
+              << GlobalParameters::G_cryst_rate(temp) << " "  //4
+              << dc_new_cryst << " " //5
+              << dc_growth << " " //6
+              << dc_new_melt << " " //7
+              << GlobalParameters::volume_of_crystalline_phase()<< " " //8
               << std::endl;
 
    
-   // Size distribution
+   // Size distribution and temperature
    {
+
+    // current temperature
+    std::ofstream temperature_file;
+    std::string filename="RESLT/temperature"+std::__cxx11::to_string(i)+".dat";
+    temperature_file.open(filename.c_str());
+    temperature_file << temp << std::endl;
+    temperature_file.close();
+
+    // Vertical line at current melt/cryst size
+    std::ofstream melt_temperature_file;
+    filename="RESLT/melt_temperature"+std::__cxx11::to_string(i)+".dat";
+    melt_temperature_file.open(filename.c_str());
+    double l_melt=GlobalParameters::size_of_new_crystal(temp);
+    melt_temperature_file << l_melt << " " << 0.0 << std::endl;
+    melt_temperature_file << l_melt << " "
+                          << GlobalParameters::T_infinite_cryst << std::endl; 
+    melt_temperature_file.close();
+
+    // Plot the size distribution
+    std::ofstream size_distribution_file;
+    filename="RESLT/size_distribution"+std::__cxx11::to_string(i)+".dat";
+    size_distribution_file.open(filename.c_str());
+    
     unsigned n=
      GlobalParameters::Number_of_crystals_initially_created_at_timestep.size();
     for (unsigned j=0;j<n;j++)
      {
-      size_distribution_file
-       <<  GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j] << " "
-       << GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
-       << " "
-       << std::endl;
+      //if (GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]>0.0)
+       {
+        size_distribution_file
+         <<  GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j] << " "
+         << GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
+         << " "
+         << std::endl;
+       }
      }
-    // Double blank line for gnuplot
-    size_distribution_file  << std::endl << std::endl;
+    size_distribution_file.close();
+    
    }
    
   }
+
+ #ifdef PARANOID
+ std::cout << "Max. errors: "
+           << max_error_stage1 << " "
+           << max_error_stage2 << " "
+           << max_error_stage3 << " "
+           << std::endl;
+#endif
+
  
-  }
+}
