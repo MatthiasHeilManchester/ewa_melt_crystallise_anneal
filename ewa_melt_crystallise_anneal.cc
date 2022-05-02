@@ -393,6 +393,14 @@ int main()
     temperature_file << temp << std::endl;
     temperature_file.close();
 
+    // Vertical line at current time
+    std::ofstream time_file;
+    filename="RESLT/time"+std::__cxx11::to_string(i)+".dat";
+    time_file.open(filename.c_str());
+    time_file << time << " " << 0.0 << std::endl;
+    time_file << time << " " << 1.0 << std::endl;
+    time_file.close();
+
     // Vertical line at current melt/cryst size
     std::ofstream melt_temperature_file;
     filename="RESLT/melt_temperature"+std::__cxx11::to_string(i)+".dat";
