@@ -20,13 +20,13 @@ namespace GlobalParameters
  //------------------------
 
  /// Magnitude of crystallation rate fct
- double G_0_cryst=1.0; 
+ double G_0_cryst=0.6055; // min^-1 // 1.0; 
 
  /// Temperature at which crystallisation rate is max.
- double T_max_cryst=5.0;
+ double T_max_cryst=383.902; // K // 5.0;
 
  /// Width of Gaussian for crystallisation rate
- double S_cryst=0.1;
+ double S_cryst=4.39142; // K // 0.1;
 
  /// Gaussian crystallation rate as a function of current temperature
  double G_cryst_rate(const double& temp)
@@ -52,11 +52,11 @@ namespace GlobalParameters
  //--------------------------------------------------
 
  /// Crystal size formed at zero temperature
- double L_c_0=0.1;
+ double L_c_0=4.081e-10; // m // 0.1;
 
  /// Temperature at which crystals grow to infinite size
  /// (or the temperature at which even infinitely large crystals melt)
- double T_infinite_cryst=12.0;
+ double T_infinite_cryst=415.873; // K // 12.0;
  
  /// Scalar size of crystal that forms at given temperature
  double size_of_new_crystal(const double& temperature)
@@ -76,15 +76,20 @@ namespace GlobalParameters
  // Secondary crystallisation
  //--------------------------
 
-
  /// Scaling parameter for growth rate
- double K_growth_1=1.0;
+ double K_growth_1=6.49e-2; // min^{-1} // used to be constant: 1.0; 
 
+ /// Activation energy for secondary crystallisation
+ double E_activation=48.7353; // kJ mol^{-1}
+
+ /// Gas constant
+ double R_gas_constant=8.31e-3; // kH mol^{-1} K^{-1}
+ 
  /// Exponential parameter for growth rate
- double K_growth_2=1.0;
+ double K_growth_2=9.11e-14; // m J^{-1} 
 
  /// Boltzmann constant
- double K_boltzmann=1.0;
+ double K_boltzmann=1.38e-23; // J K^{-1} // 1.0;
  
  /// Secondary growth rate (dL/dt) as a function of the current crystal
  /// length, l, the temperature, temp, and the current value of the crystalline
@@ -94,7 +99,8 @@ namespace GlobalParameters
                               const double& c)
  {
   double m=1.0-c;
-  return m*K_growth_1*exp(-(K_growth_2*l/(K_boltzmann*temp)));
+  double k_growth_1=K_growth_1*exp(-E_activation/(R_gas_constant*temp));
+  return m*k_growth_1*exp(-(K_growth_2*l/(K_boltzmann*temp))); // hierher Phil: are we double counting exponentials?
  }
  
 
@@ -102,25 +108,42 @@ namespace GlobalParameters
  //----------------------
 
  // Initial temperature at t=0
- double T_init=1.2*T_max_cryst;
+ double T_init=2.73e2; //  K // 1.2*T_max_cryst;
 
  // End temperature at t=1
- double T_end=0.8*T_max_cryst;
- 
+ double T_end=4.63e2; // K // 0.8*T_max_cryst;
+
+ // Rate of temperature change
+ double Rate_of_temperature_change=10.0; // K min^{-1}
+
  /// current temperature
  double current_temperature(const double& time)
- {
-  double t_switch_over=3.0;
-  if (time<t_switch_over)
-   {
-    return std::max(T_end,T_init+(T_end-T_init)*time);
-   }
-  else
-   {
-    return std::min(0.9*T_infinite_cryst,
-                    T_end-(T_end-T_init)*(time-t_switch_over)); 
-   }
- }
+  {
+   double t_switch_over=(T_end-T_init)/Rate_of_temperature_change;
+   double temperature_threshold=T_infinite_cryst-0.1;
+   if (time< t_switch_over)
+    {
+     return std::min(temperature_threshold,
+                     T_end-Rate_of_temperature_change*time);
+    }
+   else
+    {
+     return std::min(temperature_threshold,
+                     T_init+Rate_of_temperature_change*(time-t_switch_over));
+    }
+
+  // double t_switch_over=3.0;
+  // if (time<t_switch_over)
+  //  {
+  //   return std::max(T_end,T_init+(T_end-T_init)*time);
+  //  }
+  // else
+  //  {
+  //   return std::min(0.9*T_infinite_cryst,
+  //                   T_end-(T_end-T_init)*(time-t_switch_over)); 
+  //  }
+
+  }
 
 
  
@@ -163,10 +186,11 @@ int main()
  //feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
 
  // Number of timesteps
- unsigned nstep=10000; // 10000;
+ unsigned nstep=1000; // 10000;
 
- // Max. time
- double t_max=10.0; //10.0;
+ // Max. time: Once down once up
+ double t_max=2.0*(GlobalParameters::T_end-GlobalParameters::T_init)/
+  GlobalParameters::Rate_of_temperature_change; //10.0;
  
  // Timestep
  double dt=t_max/double(nstep);
@@ -367,6 +391,7 @@ int main()
               << dc_growth << " " //6
               << dc_new_melt << " " //7
               << GlobalParameters::volume_of_crystalline_phase()<< " " //8
+              << (dc_new_cryst+dc_growth+dc_new_melt)/dt << " " // 9
               << std::endl;
 
    
