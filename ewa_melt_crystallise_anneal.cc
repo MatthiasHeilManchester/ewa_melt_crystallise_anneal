@@ -20,7 +20,7 @@ namespace GlobalParameters
  //------------------------
 
  /// Magnitude of crystallation rate fct
- double G_0_cryst=1.0;
+ double G_0_cryst=1.0; 
 
  /// Temperature at which crystallisation rate is max.
  double T_max_cryst=5.0;
@@ -246,21 +246,12 @@ int main()
    double n_new_cryst=dc_new_cryst/GlobalParameters::crystal_volume(l_new);
    GlobalParameters::Number_of_crystals_initially_created_at_timestep.
     push_back(n_new_cryst);
-
-   // std::cout << "time, temp, l_new, n_new, dc_new "
-   //           << time << " "
-   //           << temp << " "
-   //           << l_new << " "
-   //           << n_new_cryst << " "
-   //           << dc_new_cryst << " "
-   //           << std::endl;
     
 #ifdef PARANOID
    // Check error
    {
     double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c)-dc_new_cryst);
     max_error_stage1=std::max(max_error_stage1,error);
-    //std::cout << "Error stage 1: " << error << std::endl;
    }
 #endif
   
@@ -310,7 +301,6 @@ int main()
    {
     double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_growth)-dc_growth);
     max_error_stage2=std::max(max_error_stage2,error);
-    //std::cout << "Error stage 2: " << error << std::endl;
    }
 #endif
 
@@ -342,7 +332,6 @@ int main()
          double T_melt=GlobalParameters::melt_temperature(l);
          if (T_melt<temp)
           {
-           //std::cout << "temp : " << temp << " melting size " << l << std::endl;
            dc_new_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
            
            // Kill 'em (sizes are set to zero too so they don't clunk up the animations
@@ -354,7 +343,6 @@ int main()
           }
          else
           {
-           //std::cout << "temp : " << temp << " not melting size " << l << std::endl;
           }
          
         }
@@ -365,7 +353,6 @@ int main()
      {
       double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_melt)-dc_new_melt);
       max_error_stage3=std::max(max_error_stage3,error);
-      //std::cout << "Error stage 3: " << error << std::endl;
      }
 #endif
     }
