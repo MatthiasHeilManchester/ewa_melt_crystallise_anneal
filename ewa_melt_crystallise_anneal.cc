@@ -8,7 +8,8 @@
 
 #include<fenv.h>
 
-//#define PARANOID
+
+#define PARANOID
 
 //=============================================================
 /// Namespace for parameters
@@ -72,7 +73,20 @@ namespace GlobalParameters
  }
 
 
+ /// Magnitude of melt rate
+ double M_hat=1.0;
 
+ /// Sharpness of continous melt rate
+ double Alpha_melt=0.01;
+ 
+ /// Continuous melting: Melt rate
+ double melt_rate(const double& temp, const double& l)
+ {
+  double t_melt=melt_temperature(l);
+  return M_hat*0.5*(1.0+tanh((temp-t_melt)/Alpha_melt));
+ }
+
+ 
  // Secondary crystallisation
  //--------------------------
 
@@ -316,7 +330,7 @@ int main()
        dc_growth+=(v_new-v_old);
        
        GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
-        +=dL_dt*dt;
+        +=dL;
       }
     }
 
@@ -353,20 +367,41 @@ int main()
         {
          double l=
           GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j];
-         double T_melt=GlobalParameters::melt_temperature(l);
-         if (T_melt<temp)
+
+         // Melt instantaneously?
+         bool melt_instantaneously=false;
+         if (melt_instantaneously)
           {
-           dc_new_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
-           
-           // Kill 'em (sizes are set to zero too so they don't clunk up the animations
-           // and 0 x 0 is still zero!
-           GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
-            =0.0;
-           GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
-            =0.0;
+           double T_melt=GlobalParameters::melt_temperature(l);
+           if (T_melt<temp)
+            {
+             dc_new_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
+             
+             // Kill 'em (sizes are set to zero too so they don't clunk up the animations
+             // and 0 x 0 is still zero!
+             GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
+              =0.0;
+             GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
+              =0.0;
+            }
           }
+         // Melt with finite melt rate (acting on the length hierher phil
+         // to update
          else
           {
+           double melt_rate=GlobalParameters::melt_rate(temp,l);
+           double dLdt=-l*melt_rate;
+           
+           // Bump (first-order Euler scheme)
+           double dL=dLdt*dt;
+           
+           double v_old=num_of_cryst*GlobalParameters::crystal_volume(l);
+           double v_new=num_of_cryst*GlobalParameters::crystal_volume(l+dL);
+           dc_new_melt+=(v_new-v_old);
+           
+           GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
+            +=dL;
+           
           }
          
         }
