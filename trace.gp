@@ -22,11 +22,11 @@ iy3=5
 iy4=6
 iy5=7
 
-     set pointsize 0.1
+     set pointsize 1.1
 plot "trace.dat" u ix:iy2 w lines lw 2 lc "blue" title var_name[iy2] axis x1y1, \
      "trace.dat" u ix:iy3 w lines lw 2 lc "black" title var_name[iy3]  axis x1y2, \
      "trace.dat" u ix:iy4 w lines lw 2 lc "gray" title var_name[iy4]  axis x1y2, \
-     "trace.dat" u ix:iy5 w lines         lc "brown" title var_name[iy5]  axis x1y2
+     "trace.dat" u ix:iy5 w linesp         lc "brown" title var_name[iy5]  axis x1y2
      #set pointsize 1.0
 
 

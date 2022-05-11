@@ -73,18 +73,24 @@ namespace GlobalParameters
  }
 
 
- /// Magnitude of melt rate
- double M_hat=1.0;
 
- /// Sharpness of continous melt rate
- double Alpha_melt=0.01;
+ /// Melt instantaneously or by modifying the growth rate of crystals
+ bool Melt_instantaneously=false;
+
+
+ // hierher park this for now
+ // /// Magnitude of melt rate
+ // double M_hat=100.0;
+
+ // /// Sharpness of continous melt rate
+ // double Alpha_melt=0.01;
  
- /// Continuous melting: Melt rate
- double melt_rate(const double& temp, const double& l)
- {
-  double t_melt=melt_temperature(l);
-  return M_hat*0.5*(1.0+tanh((temp-t_melt)/Alpha_melt));
- }
+ // /// Continuous melting: Melt rate
+ // double melt_rate(const double& l, const double& temp)
+ // {
+ //  double t_melt=melt_temperature(l);
+ //  return M_hat*0.5*(1.0+tanh((temp-t_melt)/Alpha_melt));
+ // }
 
  
  // Secondary crystallisation
@@ -114,7 +120,14 @@ namespace GlobalParameters
  {
   double m=1.0-c;
   double k_growth_1=K_growth_1*exp(-E_activation/(R_gas_constant*temp));
-  return m*k_growth_1*exp(-(K_growth_2*l/(K_boltzmann*temp))); // hierher Phil: are we double counting exponentials?
+
+  // hierher annotate/rationalise
+  double numer=K_growth_2*l;
+  double denom=K_boltzmann*temp;
+  double fract=std::max(1.0e1,numer/denom);
+  double exp_thing=exp(-fract);
+  return m*k_growth_1*exp_thing;
+  //return m*k_growth_1*exp(-(K_growth_2*l/(K_boltzmann*temp))); // hierher Phil: are we double counting exponentials?
  }
  
 
@@ -134,7 +147,7 @@ namespace GlobalParameters
  double current_temperature(const double& time)
   {
    double t_switch_over=(T_end-T_init)/Rate_of_temperature_change;
-   double temperature_threshold=T_infinite_cryst-0.1;
+   double temperature_threshold=T_infinite_cryst-20.0; // hierher this is what phil suggested -0.1;
    if (time< t_switch_over)
     {
      return std::min(temperature_threshold,
@@ -197,10 +210,10 @@ int main()
 {
 
 
- //feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
+ feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
 
  // Number of timesteps
- unsigned nstep=1000; // 10000;
+ unsigned nstep=10000; // 10000;
 
  // Max. time: Once down once up
  double t_max=2.0*(GlobalParameters::T_end-GlobalParameters::T_init)/
@@ -271,9 +284,6 @@ int main()
    // Get the size (scalar) of the crystals that are currently being formed
    double l_new=GlobalParameters::size_of_new_crystal(temp);
 
-   // Push back
-   GlobalParameters::Current_size_of_crystals_initially_created_at_timestep.
-    push_back(l_new);
    
    // Incremental volume fraction that is currently being crystallised
    // into crystals of (scalar) size l_new over current timestep;
@@ -281,9 +291,20 @@ int main()
    double dc_new_cryst = GlobalParameters::G_cryst_rate(temp)*(1.0-c)*dt;
 
    // How many crystals fit into this incremental volume? (double prec)
+   double threshold_for_number=1.0e-20; // hierher
    double n_new_cryst=dc_new_cryst/GlobalParameters::crystal_volume(l_new);
+   if (n_new_cryst<threshold_for_number)
+    {
+     n_new_cryst=0.0;
+     l_new=0.0;
+    }
+   
+   // Push back
+   GlobalParameters::Current_size_of_crystals_initially_created_at_timestep.
+    push_back(l_new);
    GlobalParameters::Number_of_crystals_initially_created_at_timestep.
     push_back(n_new_cryst);
+  
     
 #ifdef PARANOID
    // Check error
@@ -297,9 +318,12 @@ int main()
 
    // STATE 2: GROW THE CRYSTALS THAT WERE CREATED AT PREVIOUS TIMES (FIRST
    //----------------------------------------------------------------------
-   // ORDER EULER SCHEME.
-   //--------------------
+   // ORDER EULER SCHEME; POSSIBLY COMBINED WITH MELTING
+   //---------------------------------------------------
 
+   // Change in crystalline volume fraction due to melting
+   double dc_melt=0.0;
+   
 #ifdef PARANOID
    double c_before_growth=GlobalParameters::volume_of_crystalline_phase();
 #endif
@@ -321,34 +345,88 @@ int main()
        // at previous timestep
        double dL_dt=
         GlobalParameters::secondary_growth_rate(l,temp,c);
+
+
+       // Combine/override with melt?
+       if (!GlobalParameters::Melt_instantaneously)
+        {
+         double t_melt=GlobalParameters::melt_temperature(l);
+         // hierher pretty ad hoc
+         double Alpha_exponential_melt_rate=100.0;
+         if (temp>t_melt)
+          {
+           double dL_dt_old=dL_dt;
+           dL_dt=-Alpha_exponential_melt_rate*l;
+           std::cout << "l dL_dt_old dL_dt " << l << " " << dL_dt_old << " " << dL_dt << std::endl;
+          }
+        }
        
        // Bump (first-order Euler scheme)
        double dL=dL_dt*dt;
 
+       double l_threshold=1.0e-30;
+       if (l+dL<l_threshold)
+        {
+         std::cout << "rescuing " << l << " " << dL << std::endl;
+         dL=-l;
+         GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]=0.0;
+         GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
+            =0.0;
+        }
+       else
+        {
+         GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
+          +=dL;
+        }
+       
        double v_old=num_of_cryst*GlobalParameters::crystal_volume(l);
        double v_new=num_of_cryst*GlobalParameters::crystal_volume(l+dL);
        dc_growth+=(v_new-v_old);
+
+       // hierher kill
+       // // Combine with melt?
+       // if (!GlobalParameters::Melt_instantaneously)
+       //  {
+       //   // Get (linear)melt rate:
+       //   double dL_dt=-l*GlobalParameters::melt_rate(l,temp);
+         
+       //   // Bump (first-order Euler scheme)
+       //   double dL=dL_dt*dt;
+         
+       //   double v_old=num_of_cryst*GlobalParameters::crystal_volume(l);
+       //   double v_new=num_of_cryst*GlobalParameters::crystal_volume(l+dL);
+       //   dc_melt+=(v_new-v_old);
+
+       //   std::cout << "l, temp, dL_dt, dc_melt "
+       //             << l << " "
+       //             << temp << " "
+       //             << dL_dt << " "
+       //             << dc_melt << " "
+       //             << std::endl;
+         
+       //   GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
+       //    +=dL;
+       //  }
+
+
+
        
-       GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
-        +=dL;
       }
     }
 
 #ifdef PARANOID
    // Check error
    {
-    double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_growth)-dc_growth);
+    double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_growth)-(dc_growth+dc_melt));
     max_error_stage2=std::max(max_error_stage2,error);
    }
 #endif
 
 
    
-   // STAGE 3: MELT STUFF
-   //--------------------
-   double dc_new_melt=0.0;
-   bool allow_melting=true;
-   if (allow_melting)
+   // STAGE 3: MELT STUFF INSTANTANEOUSLY
+   //------------------------------------
+   if (GlobalParameters::Melt_instantaneously)
     {
 #ifdef PARANOID
      double c_before_melt=GlobalParameters::volume_of_crystalline_phase();
@@ -368,49 +446,25 @@ int main()
          double l=
           GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j];
 
-         // Melt instantaneously?
-         bool melt_instantaneously=false;
-         if (melt_instantaneously)
+         double T_melt=GlobalParameters::melt_temperature(l);
+         if (T_melt<temp)
           {
-           double T_melt=GlobalParameters::melt_temperature(l);
-           if (T_melt<temp)
-            {
-             dc_new_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
-             
-             // Kill 'em (sizes are set to zero too so they don't clunk up the animations
-             // and 0 x 0 is still zero!
-             GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
-              =0.0;
-             GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
-              =0.0;
-            }
-          }
-         // Melt with finite melt rate (acting on the length hierher phil
-         // to update
-         else
-          {
-           double melt_rate=GlobalParameters::melt_rate(temp,l);
-           double dLdt=-l*melt_rate;
+           dc_melt-=num_of_cryst*GlobalParameters::crystal_volume(l);
            
-           // Bump (first-order Euler scheme)
-           double dL=dLdt*dt;
-           
-           double v_old=num_of_cryst*GlobalParameters::crystal_volume(l);
-           double v_new=num_of_cryst*GlobalParameters::crystal_volume(l+dL);
-           dc_new_melt+=(v_new-v_old);
-           
+           // Kill 'em (sizes are set to zero too so they don't clunk up the animations
+           // and 0 x 0 is still zero!
+           GlobalParameters::Number_of_crystals_initially_created_at_timestep[j]
+            =0.0;
            GlobalParameters::Current_size_of_crystals_initially_created_at_timestep[j]
-            +=dL;
-           
-          }
-         
+            =0.0;
+          }         
         }
       }
      
 #ifdef PARANOID
      // Check error
      {
-      double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_melt)-dc_new_melt);
+      double error=fabs((GlobalParameters::volume_of_crystalline_phase()-c_before_melt)-dc_melt);
       max_error_stage3=std::max(max_error_stage3,error);
      }
 #endif
@@ -424,9 +478,9 @@ int main()
               << GlobalParameters::G_cryst_rate(temp) << " "  //4
               << dc_new_cryst << " " //5
               << dc_growth << " " //6
-              << dc_new_melt << " " //7
+              << dc_melt << " " //7
               << GlobalParameters::volume_of_crystalline_phase()<< " " //8
-              << (dc_new_cryst+dc_growth+dc_new_melt)/dt << " " // 9
+              << (dc_new_cryst+dc_growth+dc_melt)/dt << " " // 9
               << std::endl;
 
    
