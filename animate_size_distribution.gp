@@ -1,26 +1,29 @@
 reset
 
-nfile=system("ls size_distribution*.dat | wc -l")+0
-nskip=nfile/30;
+nfile=system("ls size_distribution[0-9]*.dat | wc -l")+0
+nskip=1; #nfile/1;
 
 set pointsize 1
 do for [j=1:1000] {
-#do for [i=1:9999:100] {
 do for [i=1:nfile:nskip] {
 file=sprintf('temperature%d.dat', i)
 temperature=system("cat " . file . " | awk '{print $1}'")+0
 
+l_min="`head -1 size_distribution_limits.dat | awk '{print $1}'`"
+l_max="`head -1 size_distribution_limits.dat | awk '{print $2}'`"
+n_max="`head -1 size_distribution_limits.dat | awk '{print $3}'`"
+ 
 unset origin
 unset size
 set multiplot
 
-set xrange [*:*]
-set yrange [*:*]
+set xrange [l_min:l_max]
+set yrange [0:n_max]
 
 #set xrange [0:5]
 #set yrange [0:0.4]
 set pointsize 1
-plot sprintf('size_distribution%d.dat', i) using 1:2 with points pointtype 5 title sprintf('size_distribution%d.dat', i), "crystallsation_properties.dat" u 2:1 axis x1y2, temperature axis x1y2, sprintf('melt_temperature%d.dat', i) using 1:2 w linesp axis x1y2 title "melt/cryst size"
+plot sprintf('size_distribution%d.dat', i) using 1:2 with points pointtype 5 title sprintf('size_distribution%d.dat', i), "crystallsation_properties.dat" u 2:1 w lines axis x1y2, "crystallsation_properties.dat" u 2:4 w lines axis x1y2, temperature axis x1y2, sprintf('melt_temperature%d.dat', i) using 1:2 w linesp axis x1y2 title "melt/cryst size"
 
 
 set origin 0.3, 0.3
